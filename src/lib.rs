@@ -28,7 +28,6 @@ use gl::types::GLenum;
 
 pub use gl::Gl;
 
-
 //////////////////////////////////////////////////
 // Traits
 
@@ -71,6 +70,9 @@ impl<T: Runner> GameLoop<T> {
     }
 
     pub fn run(&mut self) {
+
+        ndk_glue::android_log_init();
+
         // call init callback
         self.runner.init();
 
@@ -99,8 +101,23 @@ impl<T: Runner> GameLoop<T> {
 
             // check glutin events
             event_loop.run_return(|event, _event_loop, control_flow| {
+
+                ndk_glue::android_log_debug("rust_demo", &format!("enter event_loop, event {:?}", event));
+
                 *control_flow = ControlFlow::Exit;
-        
+
+                // ANDROID: TO-BE-OPTIMIZED: get existing native window without activity lifecycle
+                #[cfg(target_os = "android")]
+                {
+                    if self.device_ctx.is_none() && ndk_glue::native_window().is_some() {
+                        self.device_ctx = Some(DeviceContext::new(_event_loop));
+                        if let Some(device_ctx) = self.device_ctx.as_mut() {
+                            // call create device callback
+                            self.runner.create_device(&device_ctx.gl);
+                        }
+                    }
+                };
+
                 match event {
                     Event::Resumed => {
 
@@ -121,7 +138,6 @@ impl<T: Runner> GameLoop<T> {
 
                     },
                     Event::Suspended => {
-
                         // call pause callback
                         self.runner.pause();
 
@@ -215,12 +231,14 @@ impl<T: Runner> GameLoop<T> {
                             self.runner.render(&device_ctx.gl);
 
                             device_ctx.window_context.swap_buffers().unwrap();
-                        }
+                            }
                     },
                     _ => (),
                 }
             });
         }
+
+        ndk_glue::android_log_error("rust_demo", "running = false, exit event_loop...");
 
         // WINDOWS: destroy context
         #[cfg(not(target_os = "android"))]
@@ -271,7 +289,7 @@ pub enum MouseButton {
     Left,
     Middle,
     Right,
-    Other(u8),
+    Other(u16),
 }
 
 #[derive(Debug)]

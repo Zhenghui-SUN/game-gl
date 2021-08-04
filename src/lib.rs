@@ -63,12 +63,26 @@ pub struct GameLoop<T: Runner> {
     device_ctx: Option<DeviceContext>,
 }
 
+static mut IS_RUNNING: bool = false;
+
 impl<T: Runner> GameLoop<T> {
 
     pub fn new(runner: T) -> GameLoop<T> {
         Self { runner, device_ctx: None }
     }
 
+    pub fn stop(&mut self) {
+        // ndk_glue::android_log_error("rust_demo", "************** stop invoked **************");
+        // if let Some(device_ctx) = self.device_ctx.as_mut() {
+        //     ndk_glue::android_log_error("rust_demo", "************** stop success **************");
+        //     device_ctx.window_context.window().request_shut_down();
+        // }
+        unsafe {
+            IS_RUNNING = false;
+        }
+    }
+
+    // event loop driven internally
     pub fn run(&mut self) {
 
         ndk_glue::android_log_init();
@@ -96,146 +110,150 @@ impl<T: Runner> GameLoop<T> {
         }
 
         // starting game loop
-        let mut running = true;
-        while running {
-
-            // check glutin events
-            event_loop.run_return(|event, _event_loop, control_flow| {
-
-                ndk_glue::android_log_debug("rust_demo", &format!("enter event_loop, event {:?}", event));
-
-                *control_flow = ControlFlow::Exit;
-
-                // ANDROID: TO-BE-OPTIMIZED: get existing native window without activity lifecycle
-                #[cfg(target_os = "android")]
-                {
-                    if self.device_ctx.is_none() && ndk_glue::native_window().is_some() {
-                        self.device_ctx = Some(DeviceContext::new(_event_loop));
-                        if let Some(device_ctx) = self.device_ctx.as_mut() {
-                            // call create device callback
-                            self.runner.create_device(&device_ctx.gl);
-                        }
-                    }
-                };
-
-                match event {
-                    Event::Resumed => {
-
-                        // ANDROID: only create if native window is available
-                        #[cfg(target_os = "android")]
-                        {
-                            if self.device_ctx.is_none() && ndk_glue::native_window().is_some() {
-                                self.device_ctx = Some(DeviceContext::new(_event_loop));
-                                if let Some(device_ctx) = self.device_ctx.as_mut() {
-                                    // call create device callback
-                                    self.runner.create_device(&device_ctx.gl);
-                                }
-                            }
-                        }
-
-                        // call resume callback
-                        self.runner.resume();
-
-                    },
-                    Event::Suspended => {
-                        // call pause callback
-                        self.runner.pause();
-
-                        // ANDROID: only destroy if native window is available
-                        #[cfg(target_os = "android")]
-                        {
-                            if self.device_ctx.is_some() && ndk_glue::native_window().is_some() {
-                                if let Some(device_ctx) = self.device_ctx.as_mut() {
-                                    // call destroy device callback
-                                    self.runner.destroy_device(&device_ctx.gl);
-                                }
-                                self.device_ctx = None;
-                            }
-                        }
-
-                    },
-                    Event::RedrawRequested(_) => {
-
-                        if let Some(device_ctx) = self.device_ctx.as_mut() {
-                            unsafe { 
-                                device_ctx.gl.ClearColor(1.0, 0.0, 0.0, 1.0); 
-                                device_ctx.gl.ClearDepthf(1.0);
-                                device_ctx.gl.Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-                            }
-
-                            // call render callback
-                            self.runner.render(&device_ctx.gl);
-
-                            device_ctx.window_context.swap_buffers().unwrap();
-                        }
-                    },
-                    Event::WindowEvent { event, .. } => match event {
-                        WindowEvent::Resized(physical_size) => {
+        // let mut running = true;
+        unsafe {
+            IS_RUNNING = true;
+            while IS_RUNNING {
+    
+                // check glutin events
+                event_loop.run_return(|event, _event_loop, control_flow| {
+    
+                    ndk_glue::android_log_debug("rust_demo", &format!("enter event_loop, event {:?}", event));
+    
+                    *control_flow = ControlFlow::Exit;
+    
+                    // ANDROID: TO-BE-OPTIMIZED: get existing native window without activity lifecycle
+                    #[cfg(target_os = "android")]
+                    {
+                        if self.device_ctx.is_none() && ndk_glue::native_window().is_some() {
+                            self.device_ctx = Some(DeviceContext::new(_event_loop));
                             if let Some(device_ctx) = self.device_ctx.as_mut() {
-                                device_ctx.window_context.resize(physical_size);
-
-                                // call resize device callback
-                                self.runner.resize_device(&device_ctx.gl, physical_size.width, physical_size.height);
+                                // call create device callback
+                                self.runner.create_device(&device_ctx.gl);
                             }
-                        },
-                        WindowEvent::CloseRequested => {
-                            running = false;
-                        },
-                        WindowEvent::CursorMoved { position, ..} => {
-                            input_events.push(
-                                InputEvent::Cursor(
-                                    CursorEvent { location: position.into() }
-                                )
-                            );
-                        },
-                        WindowEvent::MouseInput { state, button, ..} => {
-                            input_events.push(
-                                InputEvent::Mouse(
-                                    MouseEvent { state: state.into(), button: button.into() }
-                                )
-                            );
-                        },
-                        WindowEvent::Touch(touch) => {
-                            input_events.push(
-                                InputEvent::Touch(
-                                    touch.into()
-                                )
-                            );
-                        },
-                        WindowEvent::KeyboardInput { input, ..} => {
-                            input_events.push(
-                                InputEvent::Keyboard(
-                                    input.into()
-                                )
-                            );
                         }
-                        _ => (),
-                    },
-                    Event::MainEventsCleared => {
-                        // update time
-                        let new_time = Instant::now();
-                        let elapsed_time = new_time.duration_since(time).as_millis() as f32 / 1000.0;
-                        time = new_time;
-
-                        // process input
-                        self.runner.input(&input_events);
-                        input_events.clear();
-
-                        // call update callback
-                        self.runner.update(elapsed_time);
-
-                        // render call
-                        if let Some(device_ctx) = self.device_ctx.as_mut() {
-
-                            // call render callback
-                            self.runner.render(&device_ctx.gl);
-
-                            device_ctx.window_context.swap_buffers().unwrap();
+                    };
+    
+                    match event {
+                        Event::Resumed => {
+    
+                            // ANDROID: only create if native window is available
+                            #[cfg(target_os = "android")]
+                            {
+                                if self.device_ctx.is_none() && ndk_glue::native_window().is_some() {
+                                    self.device_ctx = Some(DeviceContext::new(_event_loop));
+                                    if let Some(device_ctx) = self.device_ctx.as_mut() {
+                                        // call create device callback
+                                        self.runner.create_device(&device_ctx.gl);
+                                    }
+                                }
                             }
-                    },
-                    _ => (),
-                }
-            });
+    
+                            // call resume callback
+                            self.runner.resume();
+    
+                        },
+                        Event::Suspended => {
+                            // call pause callback
+                            self.runner.pause();
+    
+                            // ANDROID: only destroy if native window is available
+                            #[cfg(target_os = "android")]
+                            {
+                                if self.device_ctx.is_some() && ndk_glue::native_window().is_some() {
+                                    if let Some(device_ctx) = self.device_ctx.as_mut() {
+                                        // call destroy device callback
+                                        self.runner.destroy_device(&device_ctx.gl);
+                                    }
+                                    self.device_ctx = None;
+                                }
+                            }
+    
+                        },
+                        Event::RedrawRequested(_) => {
+    
+                            if let Some(device_ctx) = self.device_ctx.as_mut() {
+                                unsafe { 
+                                    device_ctx.gl.ClearColor(1.0, 0.0, 0.0, 1.0); 
+                                    device_ctx.gl.ClearDepthf(1.0);
+                                    device_ctx.gl.Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+                                }
+    
+                                // call render callback
+                                self.runner.render(&device_ctx.gl);
+    
+                                device_ctx.window_context.swap_buffers().unwrap();
+                            }
+                        },
+                        Event::WindowEvent { event, .. } => match event {
+                            WindowEvent::Resized(physical_size) => {
+                                if let Some(device_ctx) = self.device_ctx.as_mut() {
+                                    device_ctx.window_context.resize(physical_size);
+    
+                                    // call resize device callback
+                                    self.runner.resize_device(&device_ctx.gl, physical_size.width, physical_size.height);
+                                }
+                            },
+                            WindowEvent::CloseRequested => {
+                                // running = false;
+                                IS_RUNNING = false;
+                            },
+                            WindowEvent::CursorMoved { position, ..} => {
+                                input_events.push(
+                                    InputEvent::Cursor(
+                                        CursorEvent { location: position.into() }
+                                    )
+                                );
+                            },
+                            WindowEvent::MouseInput { state, button, ..} => {
+                                input_events.push(
+                                    InputEvent::Mouse(
+                                        MouseEvent { state: state.into(), button: button.into() }
+                                    )
+                                );
+                            },
+                            WindowEvent::Touch(touch) => {
+                                input_events.push(
+                                    InputEvent::Touch(
+                                        touch.into()
+                                    )
+                                );
+                            },
+                            WindowEvent::KeyboardInput { input, ..} => {
+                                input_events.push(
+                                    InputEvent::Keyboard(
+                                        input.into()
+                                    )
+                                );
+                            }
+                            _ => (),
+                        },
+                        Event::MainEventsCleared => {
+                            // update time
+                            let new_time = Instant::now();
+                            let elapsed_time = new_time.duration_since(time).as_millis() as f32 / 1000.0;
+                            time = new_time;
+    
+                            // process input
+                            self.runner.input(&input_events);
+                            input_events.clear();
+    
+                            // call update callback
+                            self.runner.update(elapsed_time);
+    
+                            // render call
+                            if let Some(device_ctx) = self.device_ctx.as_mut() {
+    
+                                // call render callback
+                                self.runner.render(&device_ctx.gl);
+    
+                                device_ctx.window_context.swap_buffers().unwrap();
+                            }
+                        },
+                        _ => (),
+                    }
+                });
+            }
         }
 
         ndk_glue::android_log_error("rust_demo", "running = false, exit event_loop...");

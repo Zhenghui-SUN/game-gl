@@ -85,8 +85,6 @@ impl<T: Runner> GameLoop<T> {
     // event loop driven internally
     pub fn run(&mut self) {
 
-        ndk_glue::android_log_init();
-
         // call init callback
         self.runner.init();
 
